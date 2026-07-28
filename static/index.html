@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diseñar Futuros · Longevity</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◑</span>
+      <div>
+        <h1>Diseñar Futuros</h1>
+        <p class="sub">Corpus de señales · Territorio: <strong id="territorio">Longevity</strong></p>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="fuentes">Fuentes</button>
+      <button class="tab" data-tab="senales">Señales</button>
+      <button class="tab" data-tab="clusters">Clusters</button>
+      <button class="tab" data-tab="tendencias">Tendencias</button>
+      <button class="tab" data-tab="visualizaciones">Visualizaciones</button>
+      <button class="tab" data-tab="escenarios">Escenarios</button>
+    </nav>
+  </header>
+
+  <main id="vistas">
+    <!-- ============ TAB FUENTES ============ -->
+    <section class="vista active" id="vista-fuentes">
+      <div class="vista-head">
+        <h2>Mapa de temáticas</h2>
+        <div class="actions">
+          <button class="btn" id="btn-generar-mapa">Generar mapa automáticamente</button>
+        </div>
+      </div>
+      <p class="hint">La hipótesis del grupo sobre qué está relacionado con el territorio.
+        Las periféricas son las que generan las señales más inesperadas.</p>
+
+      <div class="mapa-cols">
+        <div class="mapa-col" data-nivel="nucleo">
+          <h3>Núcleo <span class="contador" id="c-nucleo">0</span></h3>
+          <div class="chips" id="chips-nucleo"></div>
+          <button class="btn-link add-tematica" data-nivel="nucleo">+ Agregar temática</button>
+        </div>
+        <div class="mapa-col" data-nivel="adyacente">
+          <h3>Adyacentes <span class="contador" id="c-adyacente">0</span></h3>
+          <div class="chips" id="chips-adyacente"></div>
+          <button class="btn-link add-tematica" data-nivel="adyacente">+ Agregar temática</button>
+        </div>
+        <div class="mapa-col" data-nivel="periferico">
+          <h3>Periféricas <span class="contador" id="c-periferico">0</span></h3>
+          <div class="chips" id="chips-periferico"></div>
+          <button class="btn-link add-tematica" data-nivel="periferico">+ Agregar temática</button>
+        </div>
+      </div>
+
+      <div class="vista-head" style="margin-top:32px">
+        <h2>Fuentes <span class="muted" id="resumen-capas"></span></h2>
+        <div class="actions">
+          <button class="btn primary" id="btn-sugerir">Sugerir 500 fuentes desde el mapa</button>
+          <button class="btn" id="btn-toggle-form-fuente">+ Agregar fuente manual</button>
+        </div>
+      </div>
+
+      <form class="form-card hidden" id="form-fuente">
+        <div class="grid-2">
+          <label>Nombre<input name="nombre" required /></label>
+          <label>URL<input name="url" required placeholder="https://..." /></label>
+          <label>Tipo de acceso
+            <select name="tipo_acceso">
+              <option value="rss">rss</option>
+              <option value="api_google_news">api_google_news</option>
+              <option value="html">html</option>
+            </select>
+          </label>
+          <label>Capa
+            <select name="categoria">
+              <option value="alta_frecuencia">alta_frecuencia</option>
+              <option value="media_frecuencia">media_frecuencia</option>
+              <option value="baja_frecuencia">baja_frecuencia</option>
+            </select>
+          </label>
+          <label>Cuadrante STEEP
+            <select name="cuadrante_steep">
+              <option value="">—</option>
+              <option>Social</option><option>Tecnológico</option>
+              <option>Económico</option><option>Ecológico</option><option>Político</option>
+            </select>
+          </label>
+          <label>Temática
+            <select name="tematica_id" id="form-fuente-tematica"><option value="">—</option></select>
+          </label>
+        </div>
+        <button class="btn primary" type="submit">Guardar fuente</button>
+      </form>
+
+      <div id="fuentes-lista"></div>
+    </section>
+
+    <!-- ============ TAB SEÑALES ============ -->
+    <section class="vista" id="vista-senales">
+      <div class="panel-scraper">
+        <div class="scraper-controls">
+          <button class="btn primary" id="btn-scraper-iniciar">▶ Iniciar scraping</button>
+          <button class="btn danger" id="btn-scraper-detener" disabled>■ Detener</button>
+          <span class="capa-actual" id="capa-actual"></span>
+        </div>
+        <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+        <div class="contadores">
+          <span class="kpi"><b id="kpi-encontrados">0</b> encontrados</span>
+          <span class="kpi ok"><b id="kpi-relevantes">0</b> relevantes</span>
+          <span class="kpi muted"><b id="kpi-descartados">0</b> descartados</span>
+          <span class="kpi muted"><b id="kpi-duplicados">0</b> duplicados</span>
+          <span class="kpi"><b id="kpi-fuentes">0/0</b> fuentes</span>
+        </div>
+        <details class="errores" id="errores-box">
+          <summary>Errores (<span id="errores-count">0</span>)</summary>
+          <ul id="errores-lista"></ul>
+        </details>
+      </div>
+
+      <!-- Panel re-scraping dirigido (Etapa 5b) -->
+      <div class="panel-rescraping hidden" id="panel-rescraping">
+        <h3>Re-scraping dirigido <span class="muted">completar 100 señales por cuadrante</span></h3>
+        <table class="tabla-deficit" id="tabla-deficit"></table>
+        <button class="btn" id="btn-rescraping">Iniciar re-scraping para completar 100 por cuadrante</button>
+        <div class="rescraping-log" id="rescraping-log"></div>
+      </div>
+
+      <div class="senales-toolbar">
+        <input type="search" id="senal-buscar" placeholder="Buscar en título y cita..." />
+        <label class="switch"><input type="checkbox" id="toggle-no-relevantes" /> Mostrar no relevantes</label>
+        <label>Score ≥ <input type="range" id="score-slider" min="0" max="100" value="0" /> <span id="score-val">0</span></label>
+        <button class="btn" id="btn-toggle-form-senal">+ Carga manual</button>
+        <span class="muted" id="contador-senales"></span>
+      </div>
+
+      <form class="form-card hidden" id="form-senal">
+        <div class="grid-2">
+          <label>Título<input name="titulo" /></label>
+          <label>URL directa *<input name="url_directa" required /></label>
+          <label>Fecha origen<input name="fecha_origen" placeholder="2024-03-12" /></label>
+          <label>Cuadrante STEEP
+            <select name="cuadrante_steep">
+              <option value="">—</option>
+              <option>Social</option><option>Tecnológico</option>
+              <option>Económico</option><option>Ecológico</option><option>Político</option>
+            </select>
+          </label>
+          <label>Driver-hipótesis<input name="driver_hipotesis" /></label>
+        </div>
+        <label>Cita de relevancia * (copia literal, mín. 80 palabras)
+          <textarea name="cita_relevancia" rows="4" required></textarea></label>
+        <label>Por qué es señal (interpretación del grupo)
+          <textarea name="por_que_es_senal" rows="2"></textarea></label>
+        <button class="btn primary" type="submit">Guardar señal</button>
+      </form>
+
+      <div class="lote-toolbar hidden" id="lote-toolbar">
+        <span><b id="lote-count">0</b> seleccionadas</span>
+        <select id="lote-cuadrante"><option value="">Asignar cuadrante…</option>
+          <option>Social</option><option>Tecnológico</option><option>Económico</option>
+          <option>Ecológico</option><option>Político</option></select>
+        <select id="lote-calidad"><option value="">Asignar calidad…</option>
+          <option>alta</option><option>media</option><option>baja</option><option>útil</option></select>
+        <button class="btn" id="lote-aplicar">Aplicar</button>
+        <button class="btn danger" id="lote-borrar">Borrar</button>
+      </div>
+
+      <div id="senales-tabla"></div>
+    </section>
+
+    <!-- ============ TAB CLUSTERS ============ -->
+    <section class="vista" id="vista-clusters">
+      <div class="placeholder" id="clusters-placeholder">
+        <h2>Clusters</h2>
+        <p>Próximamente — se habilita al instalar el stack de embeddings
+          (sentence-transformers, umap-learn, hdbscan).</p>
+      </div>
+      <div id="clusters-contenido" class="hidden"></div>
+    </section>
+
+    <!-- ============ TAB TENDENCIAS ============ -->
+    <section class="vista" id="vista-tendencias">
+      <div class="placeholder">
+        <h2>Tendencias</h2>
+        <p>Próximamente.</p>
+      </div>
+      <div id="tendencias-contenido" class="hidden"></div>
+    </section>
+
+    <!-- ============ TAB VISUALIZACIONES ============ -->
+    <section class="vista" id="vista-visualizaciones">
+      <div class="placeholder">
+        <h2>Visualizaciones</h2>
+        <p>Próximamente — 14 vistas de análisis y construcción de escenarios.</p>
+      </div>
+      <div id="viz-contenido" class="hidden"></div>
+    </section>
+
+    <!-- ============ TAB ESCENARIOS ============ -->
+    <section class="vista" id="vista-escenarios">
+      <div class="placeholder" id="escenarios-placeholder">
+        <h2>Escenarios</h2>
+        <p>Próximamente — construcción de escenarios especulativos con matriz de incertidumbre.</p>
+      </div>
+      <div id="escenarios-contenido" class="hidden"></div>
+    </section>
+  </main>
+
+  <!-- panel lateral de detalle (reutilizable) -->
+  <aside class="side-panel" id="side-panel">
+    <button class="side-close" id="side-close">×</button>
+    <div id="side-content"></div>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/viz.js"></script>
+  <script src="/static/clusters.js"></script>
+  <script src="/static/tendencias.js"></script>
+  <script src="/static/escenarios.js"></script>
+</body>
+</html>
