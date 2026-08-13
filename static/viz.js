@@ -292,20 +292,8 @@ function sankey(cont) {
     ["Cluster", VIZ.clusters.filter(c => c.nombre !== "Sin clasificar").map(c => c.nombre).slice(0, 10)],
   ];
   const colX = [60, 320, 580, 820];
-  // posición de nodos
-  const nodePos = {};
-  cols.forEach(([titulo, items], ci) => {
-    svgText(svg, colX[ci], 24, titulo, { "font-weight": 700, "font-size": 12 });
-    const h = (H - 60) / items.length;
-    items.forEach((it, i) => {
-      const y = 50 + i * h + h / 2;
-      nodePos[ci + "|" + it] = { x: colX[ci], y };
-      svgEl("rect", { x: colX[ci], y: y - 12, width: 12, height: 24,
-        fill: ci === 1 ? STEEP_COLORS[it] : "#1D7874", rx: 2 }, svg);
-      svgText(svg, colX[ci] + 18, y + 4, (it || "").slice(0, 22), { "font-size": 10 });
-    });
-  });
-  // flujos nivel→steep y steep→cluster
+
+  // flujos nivel→steep y steep→cluster, contados por nº de señales
   const tematicaNivel = {}; VIZ.tematicas.forEach(t => tematicaNivel[t.id] = t.nivel);
   const flujoNS = {}, flujoSC = {};
   VIZ.senales.forEach(s => {
@@ -315,18 +303,42 @@ function sankey(cont) {
     if (cl && cl.nombre !== "Sin clasificar")
       flujoSC[s.cuadrante_steep + "|" + cl.nombre] = (flujoSC[s.cuadrante_steep + "|" + cl.nombre] || 0) + 1;
   });
+
+  // total de señales que pasan por cada nodo (para etiquetarlo)
+  const nodeTot = [{}, {}, {}];
+  for (const k in flujoNS) { const [nv, q] = k.split("|"); nodeTot[0][nv] = (nodeTot[0][nv] || 0) + flujoNS[k]; nodeTot[1][q] = (nodeTot[1][q] || 0) + flujoNS[k]; }
+  for (const k in flujoSC) { const [q, cn] = k.split("|"); nodeTot[2][cn] = (nodeTot[2][cn] || 0) + flujoSC[k]; }
   const maxF = Math.max(...Object.values(flujoNS), ...Object.values(flujoSC), 1);
-  const flujo = (a, b, key, max) => {
+
+  // posición y dibujo de nodos (con su total de señales)
+  const nodePos = {};
+  cols.forEach(([titulo, items], ci) => {
+    svgText(svg, colX[ci], 24, titulo, { "font-weight": 700, "font-size": 12 });
+    const h = (H - 60) / items.length;
+    items.forEach((it, i) => {
+      const y = 50 + i * h + h / 2;
+      nodePos[ci + "|" + it] = { x: colX[ci], y };
+      const tot = nodeTot[ci][it] || 0;
+      svgEl("rect", { x: colX[ci], y: y - 12, width: 12, height: 24,
+        fill: ci === 1 ? STEEP_COLORS[it] : "#1D7874", rx: 2 }, svg);
+      svgText(svg, colX[ci] + 18, y + 4, `${(it || "").slice(0, 20)} (${tot})`, { "font-size": 10 });
+    });
+  });
+
+  // conectores: grosor proporcional al nº de señales del flujo (más señales → más grueso)
+  const flujo = (a, b, count, label) => {
     if (!a || !b) return;
-    const sw = 1 + 8 * (max / maxF);
+    const sw = 2 + 22 * (count / maxF);
     const p = svgEl("path", { d: `M${a.x + 12},${a.y} C${(a.x + b.x) / 2},${a.y} ${(a.x + b.x) / 2},${b.y} ${b.x},${b.y}`,
-      fill: "none", stroke: "#1D7874", "stroke-width": sw, opacity: 0.22,
-      style: "cursor:pointer" }, svg);
-    p.onmouseenter = () => p.setAttribute("opacity", 0.6);
+      fill: "none", stroke: "#1D7874", "stroke-width": sw.toFixed(1), opacity: 0.22,
+      "stroke-linecap": "round", style: "cursor:pointer" }, svg);
+    const t = svgEl("title", {}, p);
+    t.textContent = `${label}: ${count} ${count === 1 ? "señal" : "señales"}`;
+    p.onmouseenter = () => p.setAttribute("opacity", 0.65);
     p.onmouseleave = () => p.setAttribute("opacity", 0.22);
   };
-  for (const k in flujoNS) { const [nv, q] = k.split("|"); flujo(nodePos["0|" + nv], nodePos["1|" + q], k, flujoNS[k]); }
-  for (const k in flujoSC) { const [q, cn] = k.split("|"); flujo(nodePos["1|" + q], nodePos["2|" + cn], k, flujoSC[k]); }
+  for (const k in flujoNS) { const [nv, q] = k.split("|"); flujo(nodePos["0|" + nv], nodePos["1|" + q], flujoNS[k], `${nv} → ${q}`); }
+  for (const k in flujoSC) { const [q, cn] = k.split("|"); flujo(nodePos["1|" + q], nodePos["2|" + cn], flujoSC[k], `${q} → ${cn}`); }
   cont.appendChild(svg); return svg;
 }
 
