@@ -81,7 +81,7 @@ const VIZ_DEFS = [
   [1, "1 · Balance STEEP"], [2, "2 · Sankey"], [3, "3 · Señal débil vs fuerte"],
   [4, "4 · Procedencia"], [5, "5 · Tres Horizontes"], [6, "6 · Curvas-S"],
   [7, "7 · Impacto × Incertid."], [8, "8 · Impacto cruzado"], [9, "9 · Mapa semántico"],
-  [10, "10 · Matriz 2×2"], [11, "11 · Iceberg CLA"],
+  [10, "10 · Matriz 2×2"], [11, "11 · Iceberg CLA"], [12, "12 · Borde · robustez"],
 ];
 
 window.cargarVizImpl = async function () {
@@ -738,6 +738,129 @@ function iceberg(cont) {
 // =====================================================================
 // Registro de renderers
 // =====================================================================
+// =====================================================================
+// VISTA 12 — BORDE · Volumen × Novedad × Robustez
+//   X = volumen (nº de señales del cluster)
+//   Y = novedad (fecha de PUBLICACIÓN de las señales, no de relevamiento)
+//   Tamaño = robustez (fuentes distintas; fallback: cuadrantes STEEP distintos)
+//   Color = STEEP dominante del cluster
+//   Cuadrantes: Futuro oficial · Ola · Residuo · Borde
+// =====================================================================
+function bordeRobustez(cont) {
+  const W = 900, H = 640;
+  const padL = 66, padR = 210, padT = 66, padB = 66;
+  const svg = nuevoSVG(W, H);
+  const clusters = VIZ.clusters.filter(c => c.nombre !== "Sin clasificar");
+
+  const median = arr => {
+    if (!arr.length) return null;
+    const a = [...arr].sort((x, y) => x - y), m = a.length >> 1;
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  };
+
+  let datos = clusters.map(c => {
+    const ss = VIZ.senales.filter(s => s.cluster_id === c.id);
+    const times = ss.map(s => Date.parse(s.fecha_origen)).filter(t => !isNaN(t));
+    const steepCount = {};
+    ss.forEach(s => { if (s.cuadrante_steep) steepCount[s.cuadrante_steep] = (steepCount[s.cuadrante_steep] || 0) + 1; });
+    const dom = Object.entries(steepCount).sort((a, b) => b[1] - a[1])[0];
+    return {
+      c, ss, vol: ss.length, tMed: median(times),
+      fuentes: new Set(ss.map(s => s.fuente_id).filter(x => x != null)).size,
+      steepDistintos: Object.keys(steepCount).length, steepDom: dom ? dom[0] : null,
+    };
+  }).filter(d => d.vol > 0);
+
+  if (datos.length < 2) {
+    svgText(svg, W / 2, H / 2, "Se necesitan al menos 2 clusters con señales.",
+      { "text-anchor": "middle", "font-size": 13, fill: "#6b7280" });
+    cont.appendChild(svg); return svg;
+  }
+
+  // novedad: rango (percentil) de la fecha mediana de publicación. Se usa el
+  // rango y no el min–max porque el corpus es casi todo reciente y un único
+  // cluster viejo comprimiría al resto contra el tope. El rango reparte el eje.
+  const fmtMes = t => t == null ? "—" : new Date(t).toISOString().slice(0, 7);
+  const conF = datos.filter(d => d.tMed != null).sort((a, b) => a.tMed - b.tMed);
+  conF.forEach((d, i) => d.novedad = conF.length > 1 ? i / (conF.length - 1) : 0.5);
+  datos.filter(d => d.tMed == null).forEach(d => d.novedad = 0);
+
+  // robustez: fuentes distintas; si el corpus tiene muy pocas, usar STEEP distintos
+  const usarSteep = Math.max(...datos.map(d => d.fuentes)) <= 2;
+  datos.forEach(d => d.rob = usarSteep ? d.steepDistintos : d.fuentes);
+  const robMax = Math.max(...datos.map(d => d.rob), 1), robMin = Math.min(...datos.map(d => d.rob), 1);
+  const radio = rob => {                         // área ∝ robustez, radio 7..26
+    if (robMax === robMin) return 13;
+    const t = (Math.sqrt(rob) - Math.sqrt(robMin)) / (Math.sqrt(robMax) - Math.sqrt(robMin));
+    return 7 + t * 19;
+  };
+
+  // escalas
+  const x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT;
+  const sx = escala([0, Math.max(...datos.map(d => d.vol))], x0, x1);
+  const sy = v => y0 + v * (y1 - y0);
+  const xDiv = sx(median(datos.map(d => d.vol))), yDiv = sy(median(datos.map(d => d.novedad)));
+
+  // resaltar cuadrante BORDE (arriba-izquierda) + divisores + ejes
+  svgEl("rect", { x: x0, y: y1, width: xDiv - x0, height: yDiv - y1, fill: "#16a34a", opacity: 0.05 }, svg);
+  svgEl("line", { x1: xDiv, y1, x2: xDiv, y2: y0, stroke: "#d1d5db", "stroke-dasharray": "4 4" }, svg);
+  svgEl("line", { x1: x0, y1: yDiv, x2: x1, y2: yDiv, stroke: "#d1d5db", "stroke-dasharray": "4 4" }, svg);
+  svgEl("line", { x1: x0, y1: y0, x2: x1, y2: y0, stroke: "#9ca3af" }, svg);
+  svgEl("line", { x1: x0, y1, x2: x0, y2: y0, stroke: "#9ca3af" }, svg);
+
+  const ql = (x, y, t, sub, anchor) => {
+    svgText(svg, x, y, t, { "font-size": 12, "font-weight": 700, fill: "#374151", "text-anchor": anchor });
+    svgText(svg, x, y + 13, sub, { "font-size": 9, fill: "#9ca3af", "text-anchor": anchor });
+  };
+  ql(x0 + 8, y1 + 16, "Borde", "señal débil · mirá el tamaño", "start");
+  ql(x1 - 8, y1 + 16, "Ola", "grande y ahora", "end");
+  ql(x0 + 8, y0 - 20, "Residuo", "viejo y marginal", "start");
+  ql(x1 - 8, y0 - 20, "Futuro oficial", "lo ya dado por hecho", "end");
+
+  svgText(svg, (x0 + x1) / 2, H - 22, "Volumen de señales →", { "text-anchor": "middle", "font-size": 11 });
+  svgText(svg, 18, (y0 + y1) / 2, "Novedad (fecha de publicación) →",
+    { "font-size": 11, transform: `rotate(-90 18 ${(y0 + y1) / 2})`, "text-anchor": "middle" });
+
+  // burbujas
+  datos.forEach(d => {
+    const r = radio(d.rob), cx = sx(d.vol), cy = sy(d.novedad);
+    const color = STEEP_COLORS[d.steepDom] || "#9ca3af";
+    const circ = svgEl("circle", { cx, cy, r, fill: color, opacity: 0.5, stroke: color,
+      "stroke-width": 1.5, style: "cursor:pointer" }, svg);
+    const rob = `robustez ${d.rob} ${usarSteep ? "cuadrantes STEEP" : "fuentes distintas"}`;
+    svgEl("title", {}, circ).textContent =
+      `${d.c.nombre}\n${d.vol} señales · novedad ${(d.novedad * 100).toFixed(0)}% (mediana ${fmtMes(d.tMed)})\n${rob}\nSTEEP dominante: ${d.steepDom || "—"}`;
+    circ.onclick = () => abrirPanel(panelClusterHTML(d.c.nombre, d.ss,
+      `${d.vol} señales · novedad ${(d.novedad * 100).toFixed(0)}% (mediana ${fmtMes(d.tMed)}) · ${rob} · STEEP ${d.steepDom || "—"}`));
+    if (r >= 12)
+      svgText(svg, cx, cy + 3, String(d.rob),
+        { "text-anchor": "middle", "font-size": 9, "font-weight": 700, fill: "#fff", style: "pointer-events:none" });
+  });
+
+  // leyenda (derecha)
+  let lx = x1 + 24, ly = padT;
+  svgText(svg, lx, ly, "Color = STEEP dominante", { "font-size": 11, "font-weight": 700 }); ly += 17;
+  STEEP_LIST.forEach(q => {
+    svgEl("circle", { cx: lx + 6, cy: ly - 4, r: 6, fill: STEEP_COLORS[q], opacity: 0.8 }, svg);
+    svgText(svg, lx + 18, ly, q, { "font-size": 10 }); ly += 17;
+  });
+  ly += 12;
+  svgText(svg, lx, ly, "Tamaño = robustez", { "font-size": 11, "font-weight": 700 }); ly += 13;
+  svgText(svg, lx, ly, usarSteep ? "(cuadrantes STEEP distintos)" : "(fuentes distintas)",
+    { "font-size": 9, fill: "#6b7280" }); ly += 16;
+  [[robMin, "poca"], [robMax, "mucha"]].forEach(([rv, lab]) => {
+    const rr = radio(rv);
+    svgEl("circle", { cx: lx + 18, cy: ly + rr, r: rr, fill: "#9ca3af", opacity: 0.4, stroke: "#6b7280" }, svg);
+    svgText(svg, lx + 40, ly + rr + 3, `${lab} (${rv})`, { "font-size": 10 }); ly += rr * 2 + 10;
+  });
+  ly += 10;
+  ["Regla: en el borde,", "mirá el tamaño antes", "que la posición.",
+   "Burbuja grande = varias", "fuentes que coinciden", "= patrón, no una voz."]
+    .forEach((t, i) => svgText(svg, lx, ly + i * 13, t, { "font-size": 9.5, fill: "#16a34a" }));
+
+  cont.appendChild(svg); return svg;
+}
+
 const VIZ_RENDER = {
   1: c => balanceSTEEP(c),       // radar + heatmap STEEP (la 13 vivía acá)
   2: c => sankey(c),
@@ -750,4 +873,5 @@ const VIZ_RENDER = {
   9: c => mapaSemantico(c),      // único mapa semántico (antes 1 y 10)
   10: c => matriz2x2(c),
   11: c => iceberg(c),
+  12: c => bordeRobustez(c),
 };
