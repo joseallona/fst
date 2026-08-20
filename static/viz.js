@@ -570,39 +570,84 @@ function impactoIncert(cont) {
     cont.innerHTML = '<p class="muted">Creá tendencias en la tab Tendencias (botón "Generar desde clusters").</p>';
     return;
   }
-  const W = 720, H = 560, pad = 60;
+  const W = 780, H = 620, pad = 58, MAX = 20;   // ≥20 intervalos por eje
   const svg = nuevoSVG(W, H);
-  const sx = v => pad + (v - 1) / 4 * (W - 2 * pad);
-  const sy = v => H - pad - (v - 1) / 4 * (H - 2 * pad);
-  // zonas
-  svgEl("rect", { x: pad, y: pad, width: (W - 2 * pad) / 2, height: (H - 2 * pad) / 2, fill: "#1D7874", opacity: 0.06 }, svg);
-  svgEl("rect", { x: W / 2, y: pad, width: (W - 2 * pad) / 2, height: (H - 2 * pad) / 2, fill: "#E8743B", opacity: 0.09 }, svg);
-  svgText(svg, pad + 8, pad + 16, "Certezas (planificar)", { "font-size": 10, fill: "#1D7874" });
-  svgText(svg, W - pad - 8, pad + 16, "Incertidumbres críticas → ejes 2×2", { "font-size": 10, fill: "#E8743B", "text-anchor": "end" });
-  svgText(svg, W / 2, H - 18, "Incertidumbre →", { "text-anchor": "middle", "font-size": 11 });
-  svgText(svg, 18, H / 2, "Impacto →", { "font-size": 11, transform: `rotate(-90 18 ${H / 2})` });
+  const x0 = pad, x1 = W - pad, y0 = H - pad, y1 = pad;
+  const sx = v => x0 + (v - 1) / (MAX - 1) * (x1 - x0);
+  const sy = v => y0 - (v - 1) / (MAX - 1) * (y0 - y1);
+  const mid = sx((MAX + 1) / 2), midY = sy((MAX + 1) / 2);
+
+  // zonas (mitad superior): certezas (izq) / incertidumbres críticas (der)
+  svgEl("rect", { x: x0, y: y1, width: mid - x0, height: midY - y1, fill: "#1D7874", opacity: 0.06 }, svg);
+  svgEl("rect", { x: mid, y: y1, width: x1 - mid, height: midY - y1, fill: "#E8743B", opacity: 0.09 }, svg);
+
+  // grilla de 20 intervalos (menores tenues, mayores cada 5 con número)
+  for (let v = 1; v <= MAX; v++) {
+    const major = v % 5 === 0 || v === 1;
+    svgEl("line", { x1: sx(v), y1, x2: sx(v), y2: y0, stroke: major ? "#d1d5db" : "#eef1f4" }, svg);
+    svgEl("line", { x1: x0, y1: sy(v), x2: x1, y2: sy(v), stroke: major ? "#d1d5db" : "#eef1f4" }, svg);
+    if (major) {
+      svgText(svg, sx(v), y0 + 14, String(v), { "text-anchor": "middle", "font-size": 9, fill: "#9ca3af" });
+      svgText(svg, x0 - 9, sy(v) + 3, String(v), { "text-anchor": "end", "font-size": 9, fill: "#9ca3af" });
+    }
+  }
+  // divisores medios + marco
+  svgEl("line", { x1: mid, y1, x2: mid, y2: y0, stroke: "#9ca3af", "stroke-dasharray": "3 3" }, svg);
+  svgEl("line", { x1: x0, y1: midY, x2: x1, y2: midY, stroke: "#9ca3af", "stroke-dasharray": "3 3" }, svg);
+  svgEl("rect", { x: x0, y: y1, width: x1 - x0, height: y0 - y1, fill: "none", stroke: "#9ca3af" }, svg);
+
+  svgText(svg, x0 + 8, y1 + 15, "Certezas (planificar)", { "font-size": 10, fill: "#1D7874", "font-weight": 600 });
+  svgText(svg, x1 - 8, y1 + 15, "Incertidumbres críticas → ejes 2×2", { "font-size": 10, fill: "#E8743B", "text-anchor": "end", "font-weight": 600 });
+  svgText(svg, (x0 + x1) / 2, H - 16, "Incertidumbre →", { "text-anchor": "middle", "font-size": 11 });
+  svgText(svg, 16, (y0 + y1) / 2, "Impacto →", { "font-size": 11, transform: `rotate(-90 16 ${(y0 + y1) / 2})`, "text-anchor": "middle" });
+
+  // rótulo flotante único (solo en hover) — evita saturar el plano con 30+ etiquetas
+  const hoverLbl = svgEl("text", { "text-anchor": "middle", "font-size": 11.5,
+    "font-weight": 700, fill: "#111827", stroke: "#fff", "stroke-width": 3.5,
+    "paint-order": "stroke", "pointer-events": "none", opacity: 0 }, svg);
   VIZ.tendencias.forEach(t => {
-    const r = 8 + Math.sqrt(t.fuerza || 1) * 3;
-    const c = svgEl("circle", { cx: sx(t.incertidumbre || 3), cy: sy(t.impacto || 3), r,
-      fill: STEEP_COLORS[t.cuadrante_steep] || "#1D7874", opacity: 0.6, style: "cursor:pointer" }, svg);
-    svgText(svg, sx(t.incertidumbre || 3), sy(t.impacto || 3) - r - 2, (t.nombre || "").slice(0, 18),
-      { "text-anchor": "middle", "font-size": 9, "font-weight": 600 });
+    const inc = t.incertidumbre || 10, imp = t.impacto || 10;
+    const r = 6 + Math.sqrt(t.fuerza || 1) * 2.6, cx = sx(inc), cy = sy(imp);
+    const col = STEEP_COLORS[t.cuadrante_steep] || "#1D7874";
+    const c = svgEl("circle", { cx, cy, r, fill: col, opacity: 0.55, stroke: col,
+      "stroke-width": 1, style: "cursor:pointer" }, svg);
+    svgEl("title", {}, c).textContent =
+      `${t.nombre}\nimpacto ${imp} · incertidumbre ${inc} · fuerza ${t.fuerza || 0}`;
+    c.onmouseenter = () => {
+      c.setAttribute("opacity", 0.85); c.setAttribute("stroke-width", 2);
+      hoverLbl.textContent = t.nombre || "";
+      hoverLbl.setAttribute("x", cx); hoverLbl.setAttribute("y", Math.max(cy - r - 5, y1 + 10));
+      hoverLbl.setAttribute("opacity", 1);
+      svg.appendChild(hoverLbl);   // traer al frente
+    };
+    c.onmouseleave = () => {
+      c.setAttribute("opacity", 0.55); c.setAttribute("stroke-width", 1);
+      hoverLbl.setAttribute("opacity", 0);
+    };
     c.onclick = () => abrirPanelEditarTendencia(t);
   });
   cont.appendChild(svg);
   const help = document.createElement("p"); help.className = "muted";
   help.style.marginTop = "10px";
-  help.textContent = "Click en una burbuja para editar impacto/incertidumbre (1-5).";
+  help.textContent = "Escala 1–20. Pasá el mouse para ver el detalle; click para editar impacto/incertidumbre.";
   cont.appendChild(help);
   return svg;
 }
 function abrirPanelEditarTendencia(t) {
+  const ss = t.cluster_id ? senalesDeCluster(t.cluster_id) : [];
+  const listaSenales = `<div style="margin-top:14px;border-top:1px solid #eee;padding-top:10px">
+    <p class="muted" style="margin-bottom:4px"><b>Señales</b> (${ss.length})</p>
+    ${ss.length ? ss.map(s => `<p style="border-bottom:1px solid #eee;padding:6px 0;font-size:12px">
+        ${senalLink(s, 100)}
+        ${s.cuadrante_steep ? `<span class="muted"> · ${esc(s.cuadrante_steep)}</span>` : ""}</p>`).join("")
+      : '<p class="muted">Sin señales vinculadas.</p>'}</div>`;
   abrirPanel(`<h3>${esc(t.nombre)}</h3>
-    <label>Impacto: <b id="imp-v">${t.impacto || 3}</b>
-      <input type="range" min="1" max="5" value="${t.impacto || 3}" id="imp-s"></label>
-    <label>Incertidumbre: <b id="inc-v">${t.incertidumbre || 3}</b>
-      <input type="range" min="1" max="5" value="${t.incertidumbre || 3}" id="inc-s"></label>
-    <button class="btn primary" id="guardar-ti">Guardar</button>`);
+    <label>Impacto: <b id="imp-v">${t.impacto || 10}</b>
+      <input type="range" min="1" max="20" value="${t.impacto || 10}" id="imp-s"></label>
+    <label>Incertidumbre: <b id="inc-v">${t.incertidumbre || 10}</b>
+      <input type="range" min="1" max="20" value="${t.incertidumbre || 10}" id="inc-s"></label>
+    <button class="btn primary" id="guardar-ti">Guardar</button>
+    ${listaSenales}`);
   $("#imp-s").oninput = () => $("#imp-v").textContent = $("#imp-s").value;
   $("#inc-s").oninput = () => $("#inc-v").textContent = $("#inc-s").value;
   $("#guardar-ti").onclick = async () => {
