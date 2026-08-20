@@ -11,6 +11,7 @@ Usa las temáticas ya definidas como punto de partida:
 Corre en background; el progreso por paso se expone vía /clusters/estado.
 """
 
+import asyncio
 import re
 import unicodedata
 from collections import Counter
@@ -20,6 +21,7 @@ import numpy as np
 
 import db
 import embeddings
+import llm
 
 # La guía especifica 0.75, calibrado para embeddings monolingües de mayor
 # magnitud. Con paraphrase-multilingual-MiniLM-L12-v2 la similitud coseno
@@ -60,6 +62,20 @@ def _nombre_desde_senales(senales):
                 cont[w] += 1
     top = [w for w, _ in cont.most_common(3)]
     return " · ".join(top).title() if top else "Cluster emergente"
+
+
+async def _nombre_emergente(senales_cl, llm_ok):
+    """Nombre de un cluster emergente: frase corta del LLM local si está
+    disponible; si no (Ollama caído o error/timeout), cae al patrón de 3
+    palabras frecuentes 'A · B · C'."""
+    fallback = _nombre_desde_senales(senales_cl)
+    if not llm_ok:
+        return fallback
+    try:
+        nombre = await asyncio.wait_for(llm.titulo_cluster(senales_cl), timeout=45)
+        return nombre if nombre and len(nombre) > 3 else fallback
+    except Exception:
+        return fallback
 
 
 async def _cargar(conn):
@@ -135,15 +151,16 @@ async def generar(conn, umbral=None):
     else:
         coords_all = np.zeros((len(senales), 2))
 
-    # PASO 5 — guardar
+    # PASO 5 — guardar (nombra clusters emergentes con el LLM si está disponible)
     _set(5, "Guardando clusters y coordenadas…", 90)
-    await _persistir(conn, senales, tematicas, asignacion, labels_resid, coords_all)
+    llm_ok = await llm.disponible()
+    await _persistir(conn, senales, tematicas, asignacion, labels_resid, coords_all, llm_ok)
 
     ESTADO.update(corriendo=False, paso=None,
                   mensaje="Clustering completado.", progreso=100)
 
 
-async def _persistir(conn, senales, tematicas, asignacion, labels_resid, coords_all):
+async def _persistir(conn, senales, tematicas, asignacion, labels_resid, coords_all, llm_ok=False):
     # limpiar clusters previos
     await conn.execute("DELETE FROM clusters")
     await conn.execute("UPDATE senales SET cluster_id=NULL")
@@ -177,7 +194,7 @@ async def _persistir(conn, senales, tematicas, asignacion, labels_resid, coords_
             emergentes.setdefault(lab, []).append(si)
     for lab, sidxs in emergentes.items():
         senales_cl = [senales[i] for i in sidxs]
-        nombre = _nombre_desde_senales(senales_cl)
+        nombre = await _nombre_emergente(senales_cl, llm_ok)
         cur = await conn.execute(
             """INSERT INTO clusters (nombre, tematica_id, es_emergente, validado,
                descripcion, driver_candidato, fecha_creado)
