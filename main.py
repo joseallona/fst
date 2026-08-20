@@ -503,6 +503,25 @@ async def editar_cluster(cid: int, req: Request):
     return row
 
 
+@app.post("/clusters/{cid}/nombrar-llm")
+async def nombrar_cluster_llm(cid: int):
+    """Rebautiza un cluster con una frase corta generada por el LLM local a
+    partir de sus señales (reemplaza los nombres tipo 'A · B · C')."""
+    async with db.get_conn() as conn:
+        cl = await fetch_one(conn, "SELECT * FROM clusters WHERE id=?", (cid,))
+        if not cl:
+            raise HTTPException(404, "cluster no existe")
+        ss = await fetch_all(conn, "SELECT titulo, cita_relevancia FROM senales "
+                             "WHERE cluster_id=?", (cid,))
+        if not ss:
+            raise HTTPException(400, "cluster sin señales")
+        nuevo = await llm.titulo_cluster(ss)
+        if nuevo:
+            await conn.execute("UPDATE clusters SET nombre=? WHERE id=?", (nuevo, cid))
+            await conn.commit()
+    return {"id": cid, "antes": cl["nombre"], "despues": nuevo or cl["nombre"]}
+
+
 @app.patch("/senales/{sid}/cluster")
 async def mover_senal_cluster(sid: int, req: Request):
     b = await req.json()

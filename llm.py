@@ -62,6 +62,31 @@ def _parse_json(txt):
     return json.loads(txt)
 
 
+async def titulo_cluster(senales):
+    """Convierte un cluster (lista de señales) en un título-frase corto en español.
+
+    Reemplaza los nombres tipo 'Iran · Trump · Health' (top-3 palabras) por una
+    frase breve y legible que capture el patrón común del cluster.
+    """
+    titulos = [s.get("titulo", "").strip() for s in senales if s.get("titulo")][:14]
+    lista = "\n".join(f"- {t}" for t in titulos) or "- (sin títulos)"
+    system = ("Sos analista de prospectiva estratégica y rotulás clusters de señales "
+              "de futuro. Respondés siempre en español.")
+    user = f"""Estos son los titulares de las señales que componen UN cluster:
+
+{lista}
+
+Escribí un rótulo breve para el cluster: una frase corta y descriptiva de 4 a 9
+palabras que capture el patrón o tema común. Reglas:
+- Frase legible por un humano, no una lista de palabras sueltas.
+- Sin dos puntos, sin comillas, sin punto final, sin el prefijo "Cluster".
+- Si los titulares son heterogéneos, nombrá el hilo conductor más plausible.
+
+Respondé SOLO con JSON válido, sin texto adicional: {{"titulo":"..."}}"""
+    j = _parse_json(await _chat(system, user, temperature=0.4))
+    return (j.get("titulo") or "").strip().strip('"').rstrip(".")
+
+
 async def sugerir_ejes(senales, territorio, horizonte):
     """Devuelve dict con eje_x_label/pos/neg y eje_y_label/pos/neg."""
     lista = "\n".join(f"{i+1}. {s.get('titulo', '')}" for i, s in enumerate(senales[:20]))
