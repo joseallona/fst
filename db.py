@@ -157,6 +157,7 @@ MIGRATIONS = [
     ("scraper_jobs", "capa_actual", "TEXT"),
     ("tendencias", "impacto", "INTEGER DEFAULT 3"),
     ("tendencias", "incertidumbre", "INTEGER DEFAULT 3"),
+    ("senales", "juez_codigo", "TEXT"),  # veredicto del juez de calidad (LLM)
 ]
 
 

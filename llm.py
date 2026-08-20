@@ -62,6 +62,42 @@ def _parse_json(txt):
     return json.loads(txt)
 
 
+async def juzgar_senales(items):
+    """Juez de calidad: aplica la rúbrica de 4 compuertas al territorio LONGEVIDAD.
+
+    items: [{"n":int,"titulo":str,"cita":str,"steep":str,"fecha":str,"tiene_url":bool}]
+    Devuelve [{"n","veredicto","codigo","razon"}] con codigo en
+    {OK, OFF-TERRITORY, NOT-ATOMIC, UNVERIFIABLE, META-PROCEDURAL}.
+    """
+    def _line(it):
+        return (f'{it["n"]}. [{it.get("steep") or "-"} | {it.get("fecha") or "-"} | '
+                f'url:{"si" if it.get("tiene_url") else "no"}] '
+                f'{(it.get("titulo") or "")[:120]} — {(it.get("cita") or "")[:200]}')
+    lineas = "\n".join(_line(it) for it in items)
+    system = ("Sos evaluador experto de señales de futuro para un corpus de prospectiva "
+              "sobre LONGEVIDAD (envejecimiento, healthspan, biología del envejecimiento "
+              "y sus drivers). Aplicás la rúbrica al pie de la letra y respondés SOLO JSON.")
+    user = f"""Evaluá cada ítem con 4 compuertas EN ORDEN; la PRIMERA que falla define el rechazo.
+
+G1 RELEVANCIA (amplia): ¿trata materialmente sobre envejecimiento/longevidad/healthspan humano, o un driver conectado (cáncer, biomedicina, biotecnología, IA aplicada a salud/biología, demografía del envejecimiento, economía/política de vidas más largas)? Si el vínculo con salud/biología/envejecimiento está ausente o es solo una palabra compartida -> REJECT codigo "OFF-TERRITORY". (Fuera: geopolítica, física de materiales, deporte-espectáculo, matemática recreativa, tecnología general no aplicada a bio/salud.)
+
+G2 ATOMICIDAD: ¿es UN solo hecho? digest/newsletter/roundup/listicle/columna/acertijo -> REJECT codigo "NOT-ATOMIC".
+
+G3 VERIFICABILIDAD: ¿hay referente concreto (paper/producto/política/dato/evento)? vago u opinión sin referente -> REJECT codigo "UNVERIFIABLE".
+
+G4 SEÑAL (los HALLAZGOS cuentan): ADMITÍ desarrollos empíricos primarios: hallazgos nuevos, resultados de experimentos/ensayos, primeras veces, nuevas capacidades/productos/aprobaciones/políticas, o una tendencia que se mueve. RECHAZÁ SOLO contenido secundario/meta: revisiones, divulgación/explainers, papers de métodos o protocolos, validación/psicometría, editoriales/opinión, interés humano -> codigo "META-PROCEDURAL".
+
+Si pasa las 4 -> veredicto "ADMIT", codigo "OK".
+
+Respondé SOLO JSON válido, exactamente un resultado por ítem (razon de 6-12 palabras):
+{{"resultados":[{{"n":1,"veredicto":"ADMIT","codigo":"OK","razon":"..."}}]}}
+
+ÍTEMS:
+{lineas}"""
+    j = _parse_json(await _chat(system, user, temperature=0.2))
+    return j.get("resultados", []) if isinstance(j, dict) else []
+
+
 async def titulo_cluster(senales):
     """Convierte un cluster (lista de señales) en un título-frase corto en español.
 
