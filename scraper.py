@@ -24,6 +24,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 import db
+import llm
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -259,7 +260,8 @@ def _elegir_cita(parrafos, conceptos, minimo=80):
 async def evaluar_url(cliente, item, conceptos):
     """
     Entra a la URL, extrae contenido, evalúa relevancia y arma el registro señal.
-    Devuelve (registro|None, motivo_descarte|None).
+    Devuelve (registro|None, motivo_descarte|None). El juez de calidad (LLM) se
+    aplica luego, en lote por fuente, dentro de correr_scraper.
     """
     url = item["url"]
     try:
@@ -304,6 +306,43 @@ async def evaluar_url(cliente, item, conceptos):
         "conceptos": sorted(encontrados),
     }
     return registro, None
+
+
+async def _juzgar_lote(registros, steep, batch=6):
+    """Juez de calidad en lote. Devuelve una lista de códigos alineada a
+    `registros` ('' cuando el juez no opinó → se conserva el filtro por conceptos).
+    Si un lote falla (el LLM devuelve JSON inválido), reintenta ítem por ítem."""
+    codigos = [""] * len(registros)
+
+    async def _run(chunk, base):
+        """Juzga chunk y escribe en codigos[base:]; devuelve cuántos resolvió."""
+        items = [{"n": k + 1, "titulo": r["titulo"], "cita": r["cita_relevancia"],
+                  "steep": steep, "fecha": r.get("fecha_origen"), "tiene_url": True}
+                 for k, r in enumerate(chunk)]
+        res = await asyncio.wait_for(llm.juzgar_senales(items), timeout=90)
+        by_n = {int(x["n"]): x for x in res
+                if isinstance(x, dict) and str(x.get("n", "")).isdigit()}
+        got = 0
+        for k in range(len(chunk)):
+            v = by_n.get(k + 1)
+            if isinstance(v, dict):
+                codigos[base + k] = (v.get("codigo") or "").upper().strip()
+                got += 1
+        return got
+
+    for bi in range(0, len(registros), batch):
+        chunk = registros[bi:bi + batch]
+        try:
+            got = await _run(chunk, bi)
+        except Exception:
+            got = 0
+        if got == 0 and len(chunk) > 1:      # lote falló → reintento ítem por ítem
+            for k, r in enumerate(chunk):
+                try:
+                    await _run([r], bi + k)
+                except Exception:
+                    pass
+    return codigos
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +397,7 @@ async def correr_scraper(solo_ids=None, score_fn=None):
         conceptos = await _cargar_conceptos(conn)
         fuentes = await _cargar_fuentes_activas(conn, solo_ids)
         await _actualizar_job(conn, job_id, fuentes_total=len(fuentes))
+        judge_ok = await llm.disponible()   # juez de calidad en la puerta, si hay LLM
 
         encontrados = relevantes = descartados = duplicados = 0
         errores = []
@@ -387,6 +427,8 @@ async def correr_scraper(solo_ids=None, score_fn=None):
                         ("sin estructura navegable", fuente["id"]))
                     await conn.commit()
 
+                # 1) extraer todos los items de la fuente (sin juzgar todavía)
+                candidatos = []
                 for item in items[:25]:  # límite por fuente para mantener el ritmo
                     if ESTADO.detener:
                         break
@@ -402,9 +444,26 @@ async def correr_scraper(solo_ids=None, score_fn=None):
                         descartados += 1
                         continue
                     existentes.add(item["url"])
+                    candidatos.append(registro)
+
+                # 2) juez de calidad EN LOTE (si hay LLM): descarta en la puerta
+                if judge_ok and candidatos:
+                    codigos = await _juzgar_lote(candidatos, fuente.get("cuadrante_steep"))
+                    admitidos = []
+                    for reg, cod in zip(candidatos, codigos):
+                        if cod and cod != "OK":
+                            descartados += 1            # rechazado por el juez
+                        else:
+                            if cod == "OK":
+                                reg["juez_codigo"] = "OK"
+                                reg["es_relevante"] = 1  # el juez manda sobre conceptos
+                            admitidos.append(reg)
+                    candidatos = admitidos
+
+                # 3) insertar los que quedaron
+                for registro in candidatos:
                     if registro["es_relevante"] != 1:
                         descartados += 1
-                        # se guarda igual pero marcado no relevante
                     senal_id = await _insertar_senal(conn, fuente, registro)
                     if registro["es_relevante"] == 1:
                         relevantes += 1
@@ -414,10 +473,10 @@ async def correr_scraper(solo_ids=None, score_fn=None):
                             await score_fn(conn, senal_id)
                         except Exception:
                             pass
-                    await _actualizar_job(
-                        conn, job_id, items_encontrados=encontrados,
-                        items_relevantes=relevantes, items_descartados=descartados,
-                        duplicados=duplicados, errores=json.dumps(errores[-50:]))
+                await _actualizar_job(
+                    conn, job_id, items_encontrados=encontrados,
+                    items_relevantes=relevantes, items_descartados=descartados,
+                    duplicados=duplicados, errores=json.dumps(errores[-50:]))
 
                 # calidad de la fuente según rendimiento
                 calidad = "útil" if rel_en_fuente >= 3 else (
@@ -443,12 +502,13 @@ async def _insertar_senal(conn, fuente, registro):
     cur = await conn.execute(
         """INSERT INTO senales
            (fuente_id, titulo, url_directa, fecha_origen, cita_relevancia,
-            cuadrante_steep, es_relevante, calidad_senal, fecha_scrapeada)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+            cuadrante_steep, es_relevante, calidad_senal, juez_codigo, fecha_scrapeada)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (fuente["id"], registro["titulo"], registro["url_directa"],
          registro["fecha_origen"], registro["cita_relevancia"],
          fuente.get("cuadrante_steep"), registro["es_relevante"],
-         "sin evaluar", datetime.now().isoformat(timespec="seconds")))
+         "sin evaluar", registro.get("juez_codigo"),
+         datetime.now().isoformat(timespec="seconds")))
     await conn.commit()
     return cur.lastrowid
 

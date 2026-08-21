@@ -217,9 +217,35 @@ async def sugerir_fuentes():
                  f["senales_generadas"], f["fecha_agregada"]))
             urls.add(f["url"])
             creadas += 1
+        # Además: búsquedas frescas del LLM (cada click agrega fuentes NUEVAS).
+        creadas_llm = 0
+        if await llm.disponible():
+            nombres = {e["nombre"] for e in await fetch_all(conn, "SELECT nombre FROM fuentes")}
+            try:
+                props = await llm.sugerir_fuentes(tematicas, list(nombres), n=24)
+            except Exception:
+                props = []
+            for p in props:
+                q = (p.get("q") or "").strip()
+                if len(q) < 3:
+                    continue
+                hl = "en-US" if str(p.get("hl", "es")).startswith("en") else "es"
+                url = fuentes_gen._gnews_rss(q, hl=hl)
+                if url in urls:
+                    continue
+                urls.add(url)
+                await conn.execute(
+                    """INSERT INTO fuentes
+                       (nombre, url, tipo_acceso, cuadrante_steep, categoria,
+                        tematica_id, activa, calidad, senales_generadas, fecha_agregada)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (f"Google News · {q}", url, "api_google_news", p.get("steep"),
+                     "alta_frecuencia", None, 1, "sin evaluar", 0, _now()))
+                creadas_llm += 1
         await conn.commit()
         total = await fetch_all(conn, "SELECT id FROM fuentes")
-    return {"creadas": creadas, "total": len(total)}
+    return {"creadas": creadas + creadas_llm, "creadas_llm": creadas_llm,
+            "total": len(total)}
 
 
 # ===========================================================================

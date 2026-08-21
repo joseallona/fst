@@ -89,13 +89,41 @@ G4 SEÑAL (los HALLAZGOS cuentan): ADMITÍ desarrollos empíricos primarios: hal
 
 Si pasa las 4 -> veredicto "ADMIT", codigo "OK".
 
-Respondé SOLO JSON válido, exactamente un resultado por ítem (razon de 6-12 palabras):
+Respondé SOLO JSON válido, exactamente un resultado por ítem. La "razon" DEBE ser
+de máximo 8 palabras, en una sola línea y SIN comillas dobles adentro.
 {{"resultados":[{{"n":1,"veredicto":"ADMIT","codigo":"OK","razon":"..."}}]}}
 
 ÍTEMS:
 {lineas}"""
     j = _parse_json(await _chat(system, user, temperature=0.2))
     return j.get("resultados", []) if isinstance(j, dict) else []
+
+
+async def sugerir_fuentes(tematicas, existentes, n=24):
+    """Propone búsquedas NUEVAS (subtemas/ángulos de longevidad) para ampliar la
+    red de fuentes, evitando repetir las ya existentes. temperatura alta para que
+    cada llamada devuelva propuestas distintas. Devuelve [{"q","steep","hl"}]."""
+    temas = ", ".join((t.get("nombre") or "") for t in list(tematicas)[:30])
+    ya = "; ".join(sorted(existentes)[:80])
+    system = ("Sos analista de prospectiva en LONGEVIDAD. Proponés búsquedas nuevas de "
+              "noticias y ciencia para ampliar la cobertura de señales de futuro. "
+              "Respondés SOLO JSON.")
+    user = f"""Territorio: LONGEVIDAD (envejecimiento, healthspan, biología del envejecimiento y sus drivers).
+Temáticas del mapa: {temas}
+
+Proponé {n} búsquedas NUEVAS, específicas y no obvias (subtemas emergentes, tecnologías,
+moléculas, empresas, actores, políticas) para descubrir señales, que NO estén ya cubiertas
+por estas fuentes existentes:
+{ya}
+
+Reglas:
+- Cada búsqueda: frase corta de 2 a 5 palabras, concreta y claramente sobre longevidad/envejecimiento.
+- Variá idioma (español e inglés) y cuadrante STEEP.
+- Nada genérico ("salud", "ciencia"): que sea específico.
+
+Respondé SOLO JSON: {{"fuentes":[{{"q":"...","steep":"Social|Tecnológico|Económico|Ecológico|Político","hl":"es|en"}}]}}"""
+    j = _parse_json(await _chat(system, user, temperature=0.85))
+    return j.get("fuentes", []) if isinstance(j, dict) else []
 
 
 async def titulo_cluster(senales):
