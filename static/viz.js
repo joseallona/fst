@@ -627,10 +627,27 @@ function impactoIncert(cont) {
     c.onclick = () => abrirPanelEditarTendencia(t);
   });
   cont.appendChild(svg);
-  const help = document.createElement("p"); help.className = "muted";
-  help.style.marginTop = "10px";
-  help.textContent = "Escala 1–20. Pasá el mouse para ver el detalle; click para editar impacto/incertidumbre.";
-  cont.appendChild(help);
+  const exp = document.createElement("div");
+  exp.style.cssText = "margin-top:12px;padding:12px 14px;border:1px solid #eee;" +
+    "border-radius:8px;background:#fafafa;font-size:12px;line-height:1.5;max-width:840px";
+  exp.innerHTML = `
+    <b style="font-size:12.5px">¿De dónde salen los ejes?</b>
+    <ul style="margin:6px 0 0;padding-left:18px;color:#374151">
+      <li><b>Impacto (eje Y)</b> — cuánto podría moldear el futuro de la longevidad si se
+        desarrolla. Es un <b>juicio del analista</b>, no un cálculo automático.</li>
+      <li><b>Incertidumbre (eje X)</b> — qué tan impredecible o disputado es su desenlace:
+        ¿sabemos cómo se va a resolver, o está genuinamente abierto? También es un juicio.</li>
+      <li>Ambos se <b>asignan y editan a mano</b>: al hacer click en una burbuja se abren
+        los sliders (escala 1–20).</li>
+      <li>En cambio, el <b>tamaño = fuerza</b> (nº de señales) y el <b>color = STEEP dominante</b>
+        salen directo de las señales del cluster.</li>
+      <li><b>Cuadrantes:</b> arriba-izquierda = <span style="color:#1D7874;font-weight:600">Certezas</span>
+        (alto impacto, baja incertidumbre → planificar); arriba-derecha =
+        <span style="color:#E8743B;font-weight:600">Incertidumbres críticas</span>
+        (alto impacto, alta incertidumbre → candidatas a ejes de la matriz 2×2 de escenarios).</li>
+    </ul>
+    <p class="muted" style="margin:8px 0 0">Pasá el mouse por una burbuja para ver el detalle; click para editar.</p>`;
+  cont.appendChild(exp);
   return svg;
 }
 function abrirPanelEditarTendencia(t) {
