@@ -813,6 +813,7 @@ function bordeRobustez(cont) {
       c, ss, vol: ss.length, tMed: median(times),
       fuentes: new Set(ss.map(s => s.fuente_id).filter(x => x != null)).size,
       steepDistintos: Object.keys(steepCount).length, steepDom: dom ? dom[0] : null,
+      steepCount,
     };
   }).filter(d => d.vol > 0);
 
@@ -870,13 +871,20 @@ function bordeRobustez(cont) {
   datos.forEach(d => {
     const r = radio(d.rob), cx = sx(d.vol), cy = sy(d.novedad);
     const color = STEEP_COLORS[d.steepDom] || "#9ca3af";
-    const circ = svgEl("circle", { cx, cy, r, fill: color, opacity: 0.5, stroke: color,
-      "stroke-width": 1.5, style: "cursor:pointer" }, svg);
+    // desglose STEEP (dominante primero) y "pureza": si ningún cuadrante llega a
+    // 2/3, la burbuja es mixta y le ponemos un aro del 2º STEEP para verlo de una.
+    const steepSorted = Object.entries(d.steepCount).sort((a, b) => b[1] - a[1]);
+    const totSteep = steepSorted.reduce((a, kv) => a + kv[1], 0) || 1;
+    const mixed = steepSorted.length > 1 && steepSorted[0][1] / totSteep < 0.66;
+    const rimColor = mixed ? (STEEP_COLORS[steepSorted[1][0]] || color) : color;
+    const circ = svgEl("circle", { cx, cy, r, fill: color, opacity: 0.5, stroke: rimColor,
+      "stroke-width": mixed ? 2.5 : 1.5, style: "cursor:pointer" }, svg);
     const rob = `robustez ${d.rob} ${usarSteep ? "cuadrantes STEEP" : "fuentes distintas"}`;
+    const steepMix = steepSorted.map(([q, n]) => `${q} ${n}`).join(" · ") || "—";
     svgEl("title", {}, circ).textContent =
-      `${d.c.nombre}\n${d.vol} señales · novedad ${(d.novedad * 100).toFixed(0)}% (mediana ${fmtMes(d.tMed)})\n${rob}\nSTEEP dominante: ${d.steepDom || "—"}`;
+      `${d.c.nombre}\n${d.vol} señales · novedad ${(d.novedad * 100).toFixed(0)}% (mediana ${fmtMes(d.tMed)})\n${rob}\nSTEEP: ${steepMix}`;
     circ.onclick = () => abrirPanel(panelClusterHTML(d.c.nombre, d.ss,
-      `${d.vol} señales · novedad ${(d.novedad * 100).toFixed(0)}% (mediana ${fmtMes(d.tMed)}) · ${rob} · STEEP ${d.steepDom || "—"}`));
+      `${d.vol} señales · novedad ${(d.novedad * 100).toFixed(0)}% (mediana ${fmtMes(d.tMed)}) · ${rob} · STEEP: ${steepMix}`));
     if (r >= 12)
       svgText(svg, cx, cy + 3, String(d.rob),
         { "text-anchor": "middle", "font-size": 9, "font-weight": 700, fill: "#fff", style: "pointer-events:none" });
@@ -889,6 +897,10 @@ function bordeRobustez(cont) {
     svgEl("circle", { cx: lx + 6, cy: ly - 4, r: 6, fill: STEEP_COLORS[q], opacity: 0.8 }, svg);
     svgText(svg, lx + 18, ly, q, { "font-size": 10 }); ly += 17;
   });
+  // muestra del aro de mezcla
+  svgEl("circle", { cx: lx + 6, cy: ly - 4, r: 6, fill: STEEP_COLORS.Social, opacity: 0.5,
+    stroke: STEEP_COLORS.Tecnológico, "stroke-width": 2.5 }, svg);
+  svgText(svg, lx + 18, ly, "borde = 2º STEEP (mixto)", { "font-size": 9, fill: "#6b7280" }); ly += 17;
   ly += 12;
   svgText(svg, lx, ly, "Tamaño = robustez", { "font-size": 11, "font-weight": 700 }); ly += 13;
   svgText(svg, lx, ly, usarSteep ? "(cuadrantes STEEP distintos)" : "(fuentes distintas)",
