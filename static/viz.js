@@ -582,34 +582,96 @@ function tresHorizontes(cont) {
 // VISTA 7 — CURVAS DE EMERGENCIA (S-curves)
 // =====================================================================
 function sCurves(cont) {
-  const W = 860, H = 500, pad = 50;
-  const clusters = VIZ.clusters.filter(c => c.nombre !== "Sin clasificar").slice(0, 10);
-  // acumulado por mes
-  const series = clusters.map(c => {
-    const ss = VIZ.senales.filter(s => s.cluster_id === c.id && s.fecha_origen)
-      .map(s => (s.fecha_origen || "").slice(0, 7)).filter(m => /^\d{4}-\d{2}/.test(m)).sort();
+  const W = 940, H = 520, padL = 54, padR = 40, padT = 30, padB = 64;
+  const x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT;
+  const mTs = m => Date.parse(m + "-01");
+  const fmtM = t => { const d = new Date(t); return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0"); };
+
+  // acumulado por mes, por cluster; nos quedamos con los de mayor volumen
+  const series = VIZ.clusters.filter(c => c.nombre !== "Sin clasificar").map(c => {
+    const meses = VIZ.senales.filter(s => s.cluster_id === c.id)
+      .map(s => (s.fecha_origen || "").slice(0, 7)).filter(m => /^\d{4}-\d{2}$/.test(m)).sort();
     const cum = {}; let acc = 0;
-    ss.forEach(m => { acc++; cum[m] = acc; });
-    return { c, puntos: Object.entries(cum) };
-  }).filter(s => s.puntos.length > 1);
+    meses.forEach(m => { acc++; cum[m] = acc; });
+    const puntos = Object.entries(cum).map(([m, v]) => ({ t: mTs(m), v }));
+    return { c, puntos, total: acc };
+  }).filter(s => s.total > 0).sort((a, b) => b.total - a.total).slice(0, 8);
+
   if (!series.length) { cont.innerHTML = '<p class="muted">Faltan fechas de origen en las señales.</p>'; return; }
-  const meses = [...new Set(series.flatMap(s => s.puntos.map(p => p[0])))].sort();
-  const maxY = Math.max(...series.flatMap(s => s.puntos.map(p => p[1])));
-  const sx = m => pad + meses.indexOf(m) / (meses.length - 1 || 1) * (W - 2 * pad);
-  const sy = v => H - pad - v / maxY * (H - 2 * pad);
+
+  const allT = series.flatMap(s => s.puntos.map(p => p.t));
+  const tMin = Math.min(...allT), tMax = Math.max(...allT), tSpan = (tMax - tMin) || 1;
+  const maxY = Math.max(...series.map(s => s.total));
+  const sx = t => x0 + (t - tMin) / tSpan * (x1 - x0);
+  const sy = v => y0 - v / maxY * (y0 - y1);
+
   const svg = nuevoSVG(W, H);
-  svgEl("line", { x1: pad, y1: H - pad, x2: W - pad, y2: H - pad, stroke: "#999" }, svg);
-  svgEl("line", { x1: pad, y1: pad, x2: pad, y2: H - pad, stroke: "#999" }, svg);
-  svgText(svg, W / 2, H - 14, "Tiempo (mes) →", { "text-anchor": "middle", "font-size": 11 });
-  svgText(svg, 16, H / 2, "Señales acumuladas →", { "font-size": 11, transform: `rotate(-90 16 ${H / 2})` });
+
+  // ── grilla + ejes ─────────────────────────────────────────────
+  // Y: 5 ticks con valor
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = Math.round(maxY * i / yTicks), y = sy(v);
+    svgEl("line", { x1: x0, y1: y, x2: x1, y2: y, stroke: i === 0 ? "#999" : "#eef1f4" }, svg);
+    svgText(svg, x0 - 8, y + 3, String(v), { "text-anchor": "end", "font-size": 10, fill: "#9ca3af" });
+  }
+  // X: 6 ticks equiespaciados en el tiempo, etiqueta YYYY-MM
+  const xTicks = Math.min(6, Math.max(2, new Set(allT).size));
+  for (let i = 0; i <= xTicks; i++) {
+    const t = tMin + tSpan * i / xTicks, x = sx(t);
+    svgEl("line", { x1: x, y1: y1, x2: x, y2: y0, stroke: "#f4f6f8" }, svg);
+    svgText(svg, x, y0 + 16, fmtM(t), { "text-anchor": "middle", "font-size": 10, fill: "#9ca3af" });
+  }
+  svgEl("line", { x1: x0, y1: y1, x2: x0, y2: y0, stroke: "#999" }, svg);
+  svgText(svg, (x0 + x1) / 2, H - 8, "Mes de publicación →", { "text-anchor": "middle", "font-size": 11 });
+  svgText(svg, 15, (y0 + y1) / 2, "Señales acumuladas →",
+    { "font-size": 11, "text-anchor": "middle", transform: `rotate(-90 15 ${(y0 + y1) / 2})` });
+
+  // ── curvas ────────────────────────────────────────────────────
   series.forEach(s => {
-    const d = s.puntos.map((p, i) => (i ? "L" : "M") + sx(p[0]) + "," + sy(p[1])).join(" ");
-    svgEl("path", { d, fill: "none", stroke: colorCluster(s.c.id), "stroke-width": 2, opacity: 0.85 }, svg);
-    const last = s.puntos[s.puntos.length - 1];
-    svgText(svg, sx(last[0]) + 4, sy(last[1]), s.c.nombre.slice(0, 18),
-      { "font-size": 9, fill: colorCluster(s.c.id) });
+    const col = colorCluster(s.c.id);
+    // línea escalonada acumulada + extensión plana hasta el borde (total actual)
+    const pts = s.puntos.map(p => [sx(p.t), sy(p.v)]);
+    let d = "M" + pts.map(p => p.join(",")).join(" L");
+    if (s.puntos[s.puntos.length - 1].t < tMax) d += " L" + x1 + "," + pts[pts.length - 1][1];
+    const path = svgEl("path", { d, fill: "none", stroke: col, "stroke-width": 2, opacity: 0.9,
+      style: "cursor:pointer" }, svg);
+    svgEl("title", {}, path).textContent = `${s.c.nombre} · ${s.total} señales`;
+    path.onclick = () => abrirPanel(panelClusterHTML(s.c.nombre, senalesDeCluster(s.c.id),
+      `${s.total} señales acumuladas`));
+    // marcadores en cada mes con evento
+    pts.forEach(([x, y]) => svgEl("circle", { cx: x, cy: y, r: 2.6, fill: col }, svg));
   });
-  cont.appendChild(svg); return svg;
+
+  // ── rótulos directos sobre cada curva (sin leyenda al costado) ──
+  // Se anclan al final de la curva; si dos quedan a la misma altura se separan
+  // verticalmente (anti-colisión) y un conector fino los une a la línea.
+  const labels = series.map(s => ({ s, col: colorCluster(s.c.id),
+    yEnd: sy(s.total), y: sy(s.total) })).sort((a, b) => a.y - b.y);
+  const gap = 15, yTop = y1 + 4, yBot = y0 - 4;
+  for (let i = 1; i < labels.length; i++)
+    if (labels[i].y < labels[i - 1].y + gap) labels[i].y = labels[i - 1].y + gap;
+  // si se pasaron del piso, empujamos hacia arriba
+  const overflow = labels[labels.length - 1].y - yBot;
+  if (overflow > 0) labels.forEach(L => L.y = Math.max(yTop, L.y - overflow));
+  labels.forEach(L => {
+    if (Math.abs(L.y - L.yEnd) > 1)   // conector desde el final de la línea al rótulo
+      svgEl("line", { x1: x1, y1: L.yEnd, x2: x1 - 5, y2: L.y, stroke: L.col, opacity: 0.5 }, svg);
+    const t = svgText(svg, x1 - 8, L.y + 3, `${L.s.c.nombre.slice(0, 24)} · ${L.s.total}`,
+      { "text-anchor": "end", "font-size": 10, fill: L.col, "font-weight": 600,
+        stroke: "#fff", "stroke-width": 3, "paint-order": "stroke", style: "cursor:pointer" });
+    t.onclick = () => abrirPanel(panelClusterHTML(L.s.c.nombre, senalesDeCluster(L.s.c.id),
+      `${L.s.total} señales acumuladas`));
+  });
+
+  cont.appendChild(svg);
+  const nota = document.createElement("p"); nota.className = "muted";
+  nota.style.marginTop = "10px";
+  nota.textContent = "Acumulado por mes de publicación (no de relevamiento). El corpus " +
+    "es un relevamiento reciente, así que la mayoría de las señales caen en los últimos meses. " +
+    "Click en una curva o en la leyenda para ver sus señales.";
+  cont.appendChild(nota);
+  return svg;
 }
 
 // =====================================================================
