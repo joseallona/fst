@@ -61,14 +61,64 @@ function senalLink(s, max = 90) {
     ? `<a href="${esc(s.url_directa)}" target="_blank" rel="noopener">${t}</a>`
     : t;
 }
-// Panel lateral de un cluster: encabezado + lista de TODAS sus señales con link.
+// Fila de señal en el panel lateral: título + acciones (Descartar/Admitir, Eliminar).
+//   Descartar  → es_relevante=0 (reversible: la saca del gráfico para tantear).
+//   Admitir    → es_relevante=1 (vuelve a entrar).
+//   Eliminar   → DELETE (no es una señal, se borra para siempre).
+function senalRowHTML(s) {
+  const off = s.es_relevante === 0;
+  return `<div class="psenal" data-sid="${s.id}" data-off="${off ? 1 : ""}"
+      style="border-bottom:1px solid #eee;padding:8px 0;display:flex;gap:8px;align-items:flex-start;justify-content:space-between${off ? ";opacity:.45" : ""}">
+    <div class="psenal-t" style="font-size:12px;min-width:0;flex:1${off ? ";text-decoration:line-through" : ""}">
+      ${senalLink(s, 100)}${s.cuadrante_steep ? `<span class="muted"> · ${esc(s.cuadrante_steep)}</span>` : ""}
+    </div>
+    <div style="display:flex;gap:5px;flex:none">
+      <button class="psenal-btn" data-act="toggle" title="${off ? "Admitir de nuevo" : "Descartar: ocultar del gráfico (reversible)"}"
+        style="border:1px solid #e5e7eb;background:#fff;border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer;white-space:nowrap;color:#374151">${off ? "↩ Admitir" : "Descartar"}</button>
+      <button class="psenal-btn" data-act="remove" title="Eliminar: no es una señal, borrar definitivamente"
+        style="border:1px solid #f3c7c7;background:#fff;border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer;white-space:nowrap;color:#dc2626">Eliminar</button>
+    </div>
+  </div>`;
+}
+// Delegación en el panel: maneja Descartar/Admitir/Eliminar y refresca el gráfico.
+function wireSenalPanel() {
+  const host = document.getElementById("side-content");
+  if (!host || host.dataset.senalWired) return;
+  host.dataset.senalWired = "1";
+  host.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".psenal-btn"); if (!btn) return;
+    const row = btn.closest(".psenal"); if (!row) return;
+    const sid = +row.dataset.sid, act = btn.dataset.act;
+    try {
+      if (act === "remove") {
+        if (!confirm("¿Eliminar esta señal? No es una señal y se borra definitivamente. No se puede deshacer.")) return;
+        await api("/senales/" + sid, { method: "DELETE" });
+        row.remove();
+        if (typeof toast === "function") toast("Señal eliminada");
+      } else if (act === "toggle") {
+        const off = row.dataset.off === "1", nuevo = off ? 1 : 0;
+        await api("/senales/" + sid, { method: "PATCH", body: JSON.stringify({ es_relevante: nuevo }) });
+        row.dataset.off = nuevo === 0 ? "1" : "";
+        row.style.opacity = nuevo === 0 ? ".45" : "";
+        row.querySelector(".psenal-t").style.textDecoration = nuevo === 0 ? "line-through" : "";
+        btn.textContent = nuevo === 0 ? "↩ Admitir" : "Descartar";
+        btn.title = nuevo === 0 ? "Admitir de nuevo" : "Descartar: ocultar del gráfico (reversible)";
+        const s = (VIZ.senales || []).find(x => x.id === sid); if (s) s.es_relevante = nuevo;
+        if (typeof toast === "function") toast(nuevo === 0 ? "Señal descartada" : "Señal admitida");
+      }
+      VIZ = await api("/visualizaciones/datos");   // el gráfico refleja el cambio en vivo
+      renderViz();
+    } catch (err) { if (typeof toast === "function") toast("Error: " + err.message); }
+  });
+}
+wireSenalPanel();
+
+// Panel lateral de un cluster: encabezado + lista de TODAS sus señales con acciones.
 function panelClusterHTML(nombre, senales, meta) {
   const ss = senales || [];
   return `<h3>${esc(nombre)}</h3>
     <p class="muted">${esc(meta || (ss.length + " señales"))}</p>
-    ${ss.length ? ss.map(s => `<p style="border-bottom:1px solid #eee;padding:7px 0;font-size:12px">
-        ${senalLink(s, 100)}
-        ${s.cuadrante_steep ? `<span class="muted"> · ${esc(s.cuadrante_steep)}</span>` : ""}</p>`).join("")
+    ${ss.length ? ss.map(senalRowHTML).join("")
       : '<p class="muted">Este cluster no tiene señales.</p>'}`;
 }
 // Devuelve las señales de un cluster por su id.
@@ -276,8 +326,8 @@ function balanceSTEEP(cont, soloHeatmap = false) {
 }
 function abrirPanelCelda(q, nv) {
   const ss = VIZ.senales.filter(s => s.cuadrante_steep === q).slice(0, 30);
-  abrirPanel(`<h3>${q} — ${nv}</h3>` + ss.map(s =>
-    `<p style="border-bottom:1px solid #eee;padding:6px 0">${senalLink(s, 80)}</p>`).join(""));
+  abrirPanel(`<h3>${q} — ${nv}</h3>
+    <p class="muted">${ss.length} señales</p>` + ss.map(senalRowHTML).join(""));
 }
 
 // =====================================================================
@@ -654,9 +704,7 @@ function abrirPanelEditarTendencia(t) {
   const ss = t.cluster_id ? senalesDeCluster(t.cluster_id) : [];
   const listaSenales = `<div style="margin-top:14px;border-top:1px solid #eee;padding-top:10px">
     <p class="muted" style="margin-bottom:4px"><b>Señales</b> (${ss.length})</p>
-    ${ss.length ? ss.map(s => `<p style="border-bottom:1px solid #eee;padding:6px 0;font-size:12px">
-        ${senalLink(s, 100)}
-        ${s.cuadrante_steep ? `<span class="muted"> · ${esc(s.cuadrante_steep)}</span>` : ""}</p>`).join("")
+    ${ss.length ? ss.map(senalRowHTML).join("")
       : '<p class="muted">Sin señales vinculadas.</p>'}</div>`;
   abrirPanel(`<h3>${esc(t.nombre)}</h3>
     <label>Impacto: <b id="imp-v">${t.impacto || 10}</b>
