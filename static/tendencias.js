@@ -20,6 +20,22 @@ window.cargarTendenciasImpl = async function () {
       <button class="btn primary" id="btn-profundizar">Profundizar: nuevo mapa + fuentes</button>
       <span class="muted">Genera sub-temáticas y fuentes dirigidas a esa(s) tendencia(s).</span>
     </div>
+    <div class="panel-scraper hidden" id="tend-scraper-panel" style="margin:12px 0">
+      <div class="scraper-controls">
+        <b id="tend-scraper-titulo">Profundización — scraping</b>
+        <span class="capa-actual" id="tend-capa-actual"></span>
+      </div>
+      <div class="progress"><div class="progress-bar" id="tend-progress-bar"></div></div>
+      <div class="contadores">
+        <span class="kpi"><b id="tend-kpi-encontrados">0</b> encontrados</span>
+        <span class="kpi ok"><b id="tend-kpi-relevantes">0</b> relevantes</span>
+        <span class="kpi muted"><b id="tend-kpi-descartados">0</b> descartados</span>
+        <span class="kpi muted"><b id="tend-kpi-duplicados">0</b> duplicados</span>
+        <span class="kpi"><b id="tend-kpi-fuentes">0/0</b> fuentes</span>
+      </div>
+      <details class="errores"><summary>Errores (<span id="tend-errores-count">0</span>)</summary>
+        <ul id="tend-errores-lista"></ul></details>
+    </div>
     <div id="tend-lista"></div>`;
   $("#btn-tend-desde-clusters").onclick = async () => {
     const r = await api("/tendencias/desde-clusters", { method: "POST" });
@@ -82,18 +98,49 @@ async function profundizarTendencias() {
     let msg = `${tem} sub-temáticas y ${r.total_fuentes} fuentes creadas`;
     msg += r.scrape_iniciado ? " · scraping iniciado (mirá la tab Señales)" : "";
     toast(msg, 5000);
-    abrirPanel(`<h3>Profundización generada</h3>
-      ${r.resumen.map(x => `<div style="border-bottom:1px solid #eee;padding:8px 0">
-        <b>${esc(x.tendencia)}</b>
-        <p class="muted">${x.tematicas_creadas} sub-temáticas · ${x.fuentes_creadas} fuentes</p>
-        <p style="font-size:12px">Conceptos: ${x.conceptos.map(esc).join(" · ") || "(sin señales para extraer)"}</p>
-      </div>`).join("")}
-      ${r.scrape_iniciado ? '<p class="muted">Scraping en curso. Seguí el progreso en la tab <b>Señales</b>; al terminar, re-clusterizá para incorporarlas.</p>'
-        : '<p class="muted">Fuentes creadas (sin scrapear). Podés iniciarlas desde la tab Señales o el mapa de Fuentes.</p>'}`);
     selTend.clear();
     $("#tend-profundizar-bar").classList.add("hidden");
+    // Progreso del scraping acá mismo (debajo de la toolbar, antes del listado).
+    if (r.scrape_iniciado) pollProfundizacionScraper();
   } catch (e) { toast("Error: " + e.message); }
   btn.disabled = false; btn.textContent = "Profundizar: nuevo mapa + fuentes";
+}
+
+// ── progreso del scraping de la profundización (en la vista Tendencias) ──
+let tendScraperPoll = null, tendUltimoCorriendo = false;
+function pollProfundizacionScraper() {
+  $("#tend-scraper-panel").classList.remove("hidden");
+  $("#tend-capa-actual").textContent = "iniciando…";
+  if (tendScraperPoll) clearInterval(tendScraperPoll);
+  tendUltimoCorriendo = false;
+  tendScraperPoll = setInterval(actualizarScraperTend, 1500);
+  actualizarScraperTend();
+}
+async function actualizarScraperTend() {
+  let est;
+  try { est = await api("/scraper/estado"); } catch (e) { return; }
+  const job = est.job || {};
+  $("#tend-kpi-encontrados").textContent = job.items_encontrados || 0;
+  $("#tend-kpi-relevantes").textContent = job.items_relevantes || 0;
+  $("#tend-kpi-descartados").textContent = job.items_descartados || 0;
+  $("#tend-kpi-duplicados").textContent = job.duplicados || 0;
+  $("#tend-kpi-fuentes").textContent = `${job.fuentes_procesadas || 0}/${job.fuentes_total || 0}`;
+  const pct = job.fuentes_total ? (100 * (job.fuentes_procesadas || 0) / job.fuentes_total) : 0;
+  $("#tend-progress-bar").style.width = pct + "%";
+  $("#tend-capa-actual").textContent = est.corriendo
+    ? `corriendo — ${(est.capa_actual || "").replace("_", " ")}` : "";
+  let errs = [];
+  try { errs = JSON.parse(job.errores || "[]"); } catch (e) {}
+  $("#tend-errores-count").textContent = errs.length;
+  $("#tend-errores-lista").innerHTML = errs.map(e => `<li>${esc(e)}</li>`).join("");
+  if (tendUltimoCorriendo && !est.corriendo) {
+    clearInterval(tendScraperPoll); tendScraperPoll = null;
+    $("#tend-capa-actual").textContent =
+      `completado — ${job.items_relevantes || 0} relevantes. Re-clusterizá para incorporarlas.`;
+    toast("Profundización: scraping finalizado", 5000);
+    pintarTendencias();
+  }
+  tendUltimoCorriendo = est.corriendo;
 }
 
 function editarTendenciaPanel(t) {
