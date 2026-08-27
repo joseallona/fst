@@ -126,6 +126,41 @@ Respondé SOLO JSON: {{"fuentes":[{{"q":"...","steep":"Social|Tecnológico|Econ�
     return j.get("fuentes", []) if isinstance(j, dict) else []
 
 
+async def sugerir_fuentes_tendencia(base, conceptos, steep=None, n=14):
+    """Para PROFUNDIZAR una tendencia: propone fuentes DIVERSAS y relevantes al
+    tema (no solo Google News). Devuelve [{"tipo","valor","nombre","hl","steep"}]
+    con tipo ∈ {pubmed, arxiv, reddit, rss, gnews}:
+      pubmed  → valor = término de búsqueda (feed RSS de PubMed)
+      arxiv   → valor = categoría (ej. 'q-bio.NC')
+      reddit  → valor = subreddit (sin r/)
+      rss     → valor = URL completa de un feed especializado conocido
+      gnews   → valor = query de noticias  (+ hl 'es'|'en')
+    """
+    cs = ", ".join(conceptos[:8]) or base
+    system = ("Sos analista de prospectiva en LONGEVIDAD y curás FUENTES de información "
+              "para vigilancia de señales de futuro. Conocés revistas, preprints, "
+              "boletines y comunidades del tema. Respondés SOLO JSON.")
+    user = f"""Tendencia a profundizar: "{base}" (cuadrante STEEP: {steep or '—'}).
+Conceptos dominantes de sus señales: {cs}.
+
+Proponé {n} FUENTES diversas y de ALTA RELEVANCIA para traer más señales sobre esta
+tendencia y sus sub-temas. Priorizá fuentes más específicas que Google News: bases
+científicas (PubMed, arXiv/bioRxiv), revistas y boletines especializados, y comunidades.
+
+Reglas:
+- Mezclá tipos: al menos varias 'pubmed' y 'arxiv', y solo 1–2 'gnews'.
+- 'pubmed'/'gnews': valor = una búsqueda concreta de 2 a 5 palabras (en inglés para pubmed/arxiv).
+- 'arxiv': valor = una categoría válida (q-bio.NC, q-bio.MN, q-bio.CB, q-bio.GN, cs.LG, ...).
+- 'reddit': valor = un subreddit real y pertinente (ej. longevity, biotech).
+- 'rss': valor = URL de un feed real que conozcas del tema (revista/blog/boletín).
+- Todo claramente conectado a longevidad/envejecimiento y a esta tendencia.
+
+Respondé SOLO JSON:
+{{"fuentes":[{{"tipo":"pubmed|arxiv|reddit|rss|gnews","valor":"...","nombre":"...","hl":"es|en","steep":"{steep or 'Tecnológico'}"}}]}}"""
+    j = _parse_json(await _chat(system, user, temperature=0.7))
+    return j.get("fuentes", []) if isinstance(j, dict) else []
+
+
 async def titulo_cluster(senales):
     """Convierte un cluster (lista de señales) en un título-frase corto en español.
 

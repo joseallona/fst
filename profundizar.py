@@ -12,7 +12,33 @@ from datetime import datetime
 
 import db
 import fuentes_gen
+import llm
 from clustering import STOP, _norm
+
+
+# arXiv relevantes al territorio (backbone determinístico, siempre válidas).
+ARXIV_BASE = ["q-bio.MN", "q-bio.CB", "q-bio.NC", "q-bio.GN"]
+
+
+def _feed_de_spec(spec):
+    """Convierte un spec del LLM en (url, tipo_acceso, nombre) o None si inválido."""
+    tipo = (spec.get("tipo") or "").lower().strip()
+    val = (spec.get("valor") or "").strip()
+    if not val:
+        return None
+    if tipo == "pubmed":
+        return (fuentes_gen._pubmed_rss(val), "rss", f"PubMed · {val[:44]}")
+    if tipo == "arxiv":
+        return (fuentes_gen._arxiv_rss(val), "rss", f"arXiv · {val}")
+    if tipo == "reddit":
+        return (fuentes_gen._reddit_rss(val.lstrip("r/")), "rss", f"Reddit · r/{val.lstrip('r/')}")
+    if tipo == "gnews":
+        hl = "en-US" if str(spec.get("hl", "es")).startswith("en") else "es"
+        return (fuentes_gen._gnews_rss(val, hl=hl), "api_google_news",
+                f"Google News · {val[:36]} [{hl[:2]}]")
+    if tipo == "rss" and val.startswith("http"):
+        return (val, "rss", (spec.get("nombre") or val)[:60])
+    return None
 
 # Boilerplate de papers/webs + palabras ultra-genéricas que no sirven como
 # concepto de búsqueda. Se suman a STOP para el filtrado.
@@ -118,30 +144,55 @@ async def profundizar(conn, tendencia_ids):
             tem_ids.append(cur.lastrowid)
             tem_creadas += 1
 
-        # --- fuentes dirigidas: Google News por concepto (ES + EN) ---
-        f_creadas = 0
+        # --- fuentes dirigidas: DIVERSAS por tema (no solo Google News) ---
+        # Objetivo: cobertura amplia (~100 señales) del tema y sus sub-temas.
+        # 1) Backbone determinístico (siempre válido): PubMed + arXiv + gnews.
+        # 2) Sugerencias del LLM local: fuentes especializadas (revistas, preprints,
+        #    boletines, comunidades) más relevantes que Google News.
         base_q = _limpiar_base(base)   # query limpia sin "·" ni duplicados
-        queries = [base_q] + [f"{base_q} {c}" for c in conceptos[:6]]
+        feeds = []   # (url, tipo_acceso, nombre)
+        # PubMed por concepto (académico, alto rendimiento y muy on-topic)
+        for c in [base_q] + conceptos[:6]:
+            feeds.append((fuentes_gen._pubmed_rss(c), "rss", f"PubMed · {c[:44]}"))
+        # arXiv/bioRxiv-style: categorías q-bio del territorio
+        for cat in ARXIV_BASE:
+            feeds.append((fuentes_gen._arxiv_rss(cat), "rss", f"arXiv · {cat}"))
+        # Google News: solo un par (ES + EN) sobre la tendencia
+        for hl in ("es", "en-US"):
+            feeds.append((fuentes_gen._gnews_rss(base_q, hl=hl), "api_google_news",
+                          f"Google News · {base_q[:36]} [{hl[:2]}]"))
+        # Sugerencias del LLM (si está disponible)
+        origen_llm = 0
+        if await llm.disponible():
+            try:
+                specs = await llm.sugerir_fuentes_tendencia(base, conceptos, steep, n=14)
+            except Exception:
+                specs = []
+            for sp in specs:
+                f = _feed_de_spec(sp)
+                if f:
+                    feeds.append(f); origen_llm += 1
+
+        f_creadas = 0
         tem_id_nucleo = tem_ids[0] if tem_ids else None
-        for q in queries:
-            for hl in ("es", "en-US"):
-                url = fuentes_gen._gnews_rss(q, hl=hl)
-                if url in urls:
-                    continue
-                cur = await conn.execute(
-                    """INSERT INTO fuentes
-                       (nombre, url, tipo_acceso, cuadrante_steep, categoria,
-                        tematica_id, activa, calidad, senales_generadas, fecha_agregada)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (f"Google News · {q[:40]} [{hl[:2]}]", url, "api_google_news",
-                     steep, "alta_frecuencia", tem_id_nucleo, 1, "sin evaluar", 0, fecha))
-                urls.add(url)
-                nuevas_fuente_ids.append(cur.lastrowid)
-                f_creadas += 1
+        for url, tipo_acc, nombre in feeds:
+            if not url or url in urls:
+                continue
+            cur = await conn.execute(
+                """INSERT INTO fuentes
+                   (nombre, url, tipo_acceso, cuadrante_steep, categoria,
+                    tematica_id, activa, calidad, senales_generadas, fecha_agregada)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (nombre, url, tipo_acc, steep, "alta_frecuencia",
+                 tem_id_nucleo, 1, "sin evaluar", 0, fecha))
+            urls.add(url)
+            nuevas_fuente_ids.append(cur.lastrowid)
+            f_creadas += 1
 
         resumen.append({
             "tendencia": base, "conceptos": conceptos,
             "tematicas_creadas": tem_creadas, "fuentes_creadas": f_creadas,
+            "fuentes_llm": origen_llm,
         })
 
     await conn.commit()
